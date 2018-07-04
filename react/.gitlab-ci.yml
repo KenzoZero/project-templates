@@ -1,0 +1,89 @@
+variables:
+  PROJECT_NAME: coc-frontend
+
+  PRIVATE_REGISTRY_URL: 1568121.dkr.ecr.us-east-1.amazonaws.com
+  BASE_IMAGE: $PROJECT_NAME:base
+  PRIVATE_DEV_IMAGE: $PRIVATE_REGISTRY_URL/$PROJECT_NAME:b$CI_PIPELINE_ID
+  PRIVATE_PROD_IMAGE: $PRIVATE_REGISTRY_URL/$PROJECT_NAME:r$CI_PIPELINE_ID
+
+  NAMESPACE_DEV: coc-dev
+  NAMESPACE_PROD: coc-prod
+
+  KUBE_DEPLOYMENT: $PROJECT_NAME
+
+stages:
+  - build
+  - test
+  - ship
+  - deploy
+
+before_script:
+- inv gen-package-dependencies-for-docker
+- docker build -t $BASE_IMAGE -f Dockerfile.base .
+
+
+####################################################
+# CI for development
+####################################################
+build_dev:
+  stage: build
+  script:
+    - docker build -t $PRIVATE_DEV_IMAGE --build-arg REACT_APP_ENV=development .
+  only:
+    - develop
+
+test_dev:
+  stage: test
+  script:
+    - docker run --rm $PRIVATE_DEV_IMAGE echo hello
+  only:
+    - develop
+
+push_dev:
+  stage: ship
+  script:
+    - $(aws ecr get-login --no-include-email --region us-east-1)
+    - docker push $PRIVATE_DEV_IMAGE
+  only:
+    - develop
+
+deploy_dev:
+  stage: deploy
+  script:
+    - kubectl set image --namespace=$NAMESPACE_DEV deployment/$KUBE_DEPLOYMENT $KUBE_DEPLOYMENT=$PRIVATE_DEV_IMAGE
+  only:
+    - develop
+
+
+####################################################
+# CI for production
+####################################################
+build_prod:
+  stage: build
+  script:
+    - docker build -t $PRIVATE_PROD_IMAGE --build-arg REACT_APP_ENV=production .
+  only:
+    - master
+
+test_prod:
+  stage: test
+  script:
+    - docker run --rm $PRIVATE_PROD_IMAGE echo hello
+  only:
+    - master
+
+push_prod:
+  stage: ship
+  script:
+    - $(aws ecr get-login --no-include-email --region us-east-1)
+    - docker push $PRIVATE_PROD_IMAGE
+  only:
+    - master
+
+deploy_prod:
+  stage: deploy
+  script:
+    - kubectl set image --namespace=$NAMESPACE_PROD deployment/$KUBE_DEPLOYMENT $KUBE_DEPLOYMENT=$PRIVATE_PROD_IMAGE
+  only:
+    - master
+  when: manual
